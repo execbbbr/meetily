@@ -320,9 +320,10 @@ impl SummaryService {
             }
         };
 
-        // Validate and setup api_key, Flexible for Ollama, BuiltInAI, and CustomOpenAI
-        let api_key = if provider == LLMProvider::Ollama || provider == LLMProvider::BuiltInAI || provider == LLMProvider::CustomOpenAI {
+        // Validate and setup api_key, Flexible for Ollama, BuiltInAI, CustomOpenAI, GitHubCopilot
+        let api_key = if provider == LLMProvider::Ollama || provider == LLMProvider::BuiltInAI || provider == LLMProvider::CustomOpenAI || provider == LLMProvider::GitHubCopilot {
             // These providers don't require API keys from the standard database column
+            // (GitHubCopilot resolves its bearer token from the OAuth credential below)
             String::new()
         } else {
             match SettingsRepository::get_api_key(&pool, &model_provider).await {
@@ -383,9 +384,29 @@ impl SummaryService {
                 (None, None, None, None, None)
             };
 
-        // For CustomOpenAI, use its API key (if any) instead of the empty string
+        // For GitHubCopilot, resolve a valid short-lived token + base URL from the
+        // stored OAuth credential (auto-refreshing if expired). The token becomes the
+        // bearer api_key and the base URL is passed through the custom_openai_endpoint
+        // channel, which the GitHubCopilot arm in llm_client consumes.
+        let (custom_openai_endpoint, copilot_token) = if provider == LLMProvider::GitHubCopilot {
+            match crate::copilot_auth::get_valid_credential(&pool).await {
+                Ok(cred) => (Some(cred.base_url), Some(cred.copilot_token)),
+                Err(e) => {
+                    let err_msg = format!("GitHub Copilot not ready: {}", e);
+                    Self::update_process_failed(&pool, &meeting_id, &err_msg).await;
+                    return;
+                }
+            }
+        } else {
+            (custom_openai_endpoint, None)
+        };
+
+        // For CustomOpenAI, use its API key (if any) instead of the empty string.
+        // For GitHubCopilot, use the resolved short-lived copilot token.
         let final_api_key = if provider == LLMProvider::CustomOpenAI {
             custom_openai_api_key.unwrap_or_default()
+        } else if provider == LLMProvider::GitHubCopilot {
+            copilot_token.unwrap_or_default()
         } else {
             api_key
         };

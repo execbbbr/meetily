@@ -11,6 +11,7 @@ import { PreferenceSettings } from '@/components/PreferenceSettings';
 import { SummaryModelSettings } from '@/components/SummaryModelSettings';
 import { BetaSettings } from '@/components/BetaSettings';
 import { VisionEndpointSettings } from '@/components/VisionEndpointSettings';
+import { CopilotSettings } from '@/components/CopilotSettings';
 import { useConfig } from '@/contexts/ConfigContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
@@ -128,6 +129,7 @@ export default function SettingsPage() {
             </TabsContent>
             <TabsContent value="summaryModels" className="space-y-6">
               <SummaryModelSettings />
+              <CopilotSettings />
               <VisionEndpointSettings />
             </TabsContent>
             <TabsContent value="beta" className="mt-6">

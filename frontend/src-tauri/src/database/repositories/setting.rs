@@ -432,4 +432,66 @@ impl SettingsRepository {
 
         Ok(())
     }
+
+    /// Load the persisted GitHub Copilot credential (OAuth tokens + base URL), if any.
+    pub async fn get_copilot_config(
+        pool: &SqlitePool,
+    ) -> std::result::Result<Option<crate::copilot_auth::CopilotCredential>, sqlx::Error> {
+        use sqlx::Row;
+
+        let row = sqlx::query(
+            r#"
+            SELECT copilotConfig
+            FROM settings
+            WHERE id = '1'
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        match row {
+            Some(record) => {
+                let config_json: Option<String> = record.get("copilotConfig");
+                if let Some(json) = config_json {
+                    let config: crate::copilot_auth::CopilotCredential =
+                        serde_json::from_str(&json).map_err(|e| {
+                            sqlx::Error::Protocol(
+                                format!("Invalid JSON in copilotConfig: {}", e).into(),
+                            )
+                        })?;
+                    Ok(Some(config))
+                } else {
+                    Ok(None)
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Persist the GitHub Copilot credential.
+    pub async fn save_copilot_config(
+        pool: &SqlitePool,
+        config: &crate::copilot_auth::CopilotCredential,
+    ) -> std::result::Result<(), sqlx::Error> {
+        let config_json = serde_json::to_string(config).map_err(|e| {
+            sqlx::Error::Protocol(
+                format!("Failed to serialize copilot config to JSON: {}", e).into(),
+            )
+        })?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO settings (id, provider, model, whisperModel, copilotConfig)
+            VALUES ('1', 'openai', 'gpt-4o-2024-11-20', 'large-v3', $1)
+            ON CONFLICT(id) DO UPDATE SET
+                copilotConfig = excluded.copilotConfig
+            "#,
+        )
+        .bind(config_json)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
 }
