@@ -472,22 +472,21 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         saveTimeoutRef.current = undefined;
       }
 
+      // Cloud-first onboarding: do NOT download or require any local summary
+      // model. Users configure GitHub Copilot / Azure in the Cloud Setup step.
+      // We still record a recommended model name so downstream code that expects
+      // a value has one, but we never trigger its download here.
       let modelToSave = selectedSummaryModel;
       if (!modelToSave) {
-        modelToSave = await invoke<string>('builtin_ai_get_recommended_model');
+        try {
+          modelToSave = await invoke<string>('builtin_ai_get_recommended_model');
+        } catch {
+          modelToSave = '';
+        }
         setSelectedSummaryModel(modelToSave);
       }
 
-      const selectedModelReady = await invoke<boolean>('builtin_ai_is_model_ready', {
-        modelName: modelToSave,
-        refresh: true,
-      });
-      setSummaryModelDownloaded(selectedModelReady);
-      if (!selectedModelReady) {
-        requestSummaryModelDownload(modelToSave);
-      }
-
-      // Onboarding always uses builtin-ai with selected model
+      // Onboarding completes regardless of local model presence.
       await invoke('complete_onboarding', {
         model: modelToSave,
       });
