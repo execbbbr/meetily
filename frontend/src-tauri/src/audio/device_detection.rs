@@ -440,9 +440,12 @@ mod tests {
 
     #[test]
     fn test_builtin_mic_detection() {
-        let kind = InputDeviceKind::detect("MacBook Pro Microphone", 0, 0);
-        // Should fall through to Unknown (no Bluetooth pattern, no buffer size)
-        assert_eq!(kind, InputDeviceKind::Unknown);
+        // Use the name-based heuristic directly: "MacBook Pro Microphone" has no
+        // Bluetooth pattern, so name-based detection yields no verdict (None).
+        // (Note: the full detect() entry point queries real hardware via Core
+        // Audio on macOS, which is environment-dependent and not unit-testable.)
+        let kind = InputDeviceKind::detect_by_name("MacBook Pro Microphone");
+        assert_eq!(kind, None);
     }
 
     #[test]
