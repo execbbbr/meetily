@@ -287,6 +287,19 @@ export default function SkillsPage() {
         setSkillName(inferred);
       }
 
+      // Persist the generated skill so it can be viewed later from the meeting
+      // details page, alongside (not replacing) the meeting summary.
+      try {
+        await invoke('save_skill_artifact', {
+          meetingId: selectedMeetingId,
+          skillName: inferred || 'Untitled Skill',
+          markdown: generatedMarkdown,
+        });
+      } catch (persistError) {
+        console.error('[Skills] Failed to persist skill artifact:', persistError);
+        // Non-fatal: the draft is still shown and can be exported.
+      }
+
       toast.success('Skill draft generated.');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

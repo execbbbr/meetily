@@ -685,6 +685,9 @@ pub fn run() {
             video_frames::commands::extract_video_keyframes,
             // Skill vision commands
             skill_vision::commands::generate_skill_with_vision,
+            skill_vision::commands::save_skill_artifact,
+            skill_vision::commands::list_skill_artifacts,
+            skill_vision::commands::delete_skill_artifact,
             // GitHub Copilot OAuth commands
             copilot_auth::commands::copilot_start_login,
             copilot_auth::commands::copilot_poll_login,

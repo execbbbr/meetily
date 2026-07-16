@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { TranscriptPanel } from '@/components/MeetingDetails/TranscriptPanel';
 import { SummaryPanel } from '@/components/MeetingDetails/SummaryPanel';
+import { SkillsPanel } from '@/components/MeetingDetails/SkillsPanel';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 
 // Custom hooks
@@ -192,8 +193,10 @@ export default function PageContent({
           meetingFolderPath={meeting.folder_path}
           onRefetchTranscripts={onRefetchTranscripts}
         />
-        <SummaryPanel
-          meeting={meeting}
+        <div className="flex flex-col flex-1 overflow-hidden">
+          <div className="flex-1 overflow-hidden">
+            <SummaryPanel
+              meeting={meeting}
           meetingTitle={meetingData.meetingTitle}
           onTitleChange={meetingData.handleTitleChange}
           isEditingTitle={meetingData.isEditingTitle}
@@ -227,6 +230,11 @@ export default function PageContent({
           isModelConfigLoading={false}
           onOpenModelSettings={handleRegisterModalOpen}
         />
+          </div>
+          <div className="border-t border-gray-200 max-h-[40%] overflow-auto bg-gray-50">
+            <SkillsPanel meetingId={meeting.id} />
+          </div>
+        </div>
       </div>
     </motion.div>
   );
