@@ -268,6 +268,51 @@ fn image_file_to_data_url(path: &str) -> Result<String, String> {
     Ok(format!("data:{};base64,{}", mime, encoded))
 }
 
+// ---------------------------------------------------------------------------
+// Skill artifact persistence
+//
+// Skills are stored in their own table (skill_artifacts), separate from the
+// meeting summary, so a meeting can have BOTH a summary and one or more skills
+// visible side by side from the meeting details page.
+// ---------------------------------------------------------------------------
+
+use crate::database::repositories::skill_artifact::{SkillArtifact, SkillArtifactsRepository};
+
+/// Persist a generated skill for a meeting. Returns the new artifact id.
+#[tauri::command]
+pub async fn save_skill_artifact(
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+    skill_name: String,
+    markdown: String,
+) -> Result<String, String> {
+    SkillArtifactsRepository::save(state.db_manager.pool(), &meeting_id, &skill_name, &markdown)
+        .await
+        .map_err(|e| format!("Failed to save skill artifact: {}", e))
+}
+
+/// List all skill artifacts for a meeting (newest first).
+#[tauri::command]
+pub async fn list_skill_artifacts(
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+) -> Result<Vec<SkillArtifact>, String> {
+    SkillArtifactsRepository::list_for_meeting(state.db_manager.pool(), &meeting_id)
+        .await
+        .map_err(|e| format!("Failed to list skill artifacts: {}", e))
+}
+
+/// Delete a skill artifact by id. Returns true if a row was removed.
+#[tauri::command]
+pub async fn delete_skill_artifact(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
+    SkillArtifactsRepository::delete(state.db_manager.pool(), &id)
+        .await
+        .map_err(|e| format!("Failed to delete skill artifact: {}", e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
