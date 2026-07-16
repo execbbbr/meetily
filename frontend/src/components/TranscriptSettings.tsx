@@ -33,7 +33,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     const [isLockButtonVibrating, setIsLockButtonVibrating] = useState<boolean>(false);
     const [uiProvider, setUiProvider] = useState<TranscriptModelProps['provider']>(transcriptModelConfig.provider);
     const [diarizationEnabled, setDiarizationEnabled] = useState<boolean>(transcriptModelConfig.diarizationEnabled ?? false);
-    const [diarizationProvider, setDiarizationProvider] = useState<'local' | 'azure'>(transcriptModelConfig.diarizationProvider ?? 'local');
+    const [diarizationProvider, setDiarizationProvider] = useState<'local' | 'azure'>(transcriptModelConfig.diarizationProvider === 'local' ? 'azure' : (transcriptModelConfig.diarizationProvider ?? 'azure'));
     const [azureSpeechKey, setAzureSpeechKey] = useState<string>(transcriptModelConfig.azureSpeechKey || '');
     const [azureSpeechRegion, setAzureSpeechRegion] = useState<string>(transcriptModelConfig.azureSpeechRegion || '');
 
@@ -41,7 +41,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     useEffect(() => {
         setUiProvider(transcriptModelConfig.provider);
         setDiarizationEnabled(transcriptModelConfig.diarizationEnabled ?? false);
-        setDiarizationProvider(transcriptModelConfig.diarizationProvider ?? 'local');
+        setDiarizationProvider(transcriptModelConfig.diarizationProvider === 'local' ? 'azure' : (transcriptModelConfig.diarizationProvider ?? 'azure'));
         setAzureSpeechKey(transcriptModelConfig.azureSpeechKey || '');
         setAzureSpeechRegion(transcriptModelConfig.azureSpeechRegion || '');
     }, [
@@ -264,8 +264,8 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                             <SelectValue placeholder="Select diarization provider" />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="local">Local (post-recording)</SelectItem>
                                             <SelectItem value="azure">Azure (real-time)</SelectItem>
+                                            <SelectItem value="local" disabled>Local (coming soon)</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
