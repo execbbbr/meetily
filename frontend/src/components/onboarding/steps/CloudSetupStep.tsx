@@ -17,7 +17,7 @@ import { toast } from 'sonner';
  * This replaces the old DownloadProgressStep so no local model is ever fetched.
  */
 export function CloudSetupStep() {
-  const { completeOnboarding } = useOnboarding();
+  const { completeOnboarding, goNext } = useOnboarding();
 
   const [isMac, setIsMac] = useState(false);
   const [azureKey, setAzureKey] = useState('');
@@ -67,6 +67,12 @@ export function CloudSetupStep() {
   };
 
   const handleFinish = async () => {
+    // On macOS there's still a Permissions step after this one — advance to it.
+    // Elsewhere this is the last step, so complete onboarding directly.
+    if (isMac) {
+      goNext();
+      return;
+    }
     setIsCompleting(true);
     try {
       await completeOnboarding();
@@ -81,8 +87,8 @@ export function CloudSetupStep() {
     <OnboardingContainer
       title="Connect Cloud Providers"
       description="Meetily can run fully on cloud AI — no local models to download. Sign in to GitHub Copilot for summaries and add your Azure Speech key for transcription."
-      step={3}
-      totalSteps={isMac ? 4 : 3}
+      step={1}
+      totalSteps={isMac ? 2 : 1}
     >
       <div className="flex flex-col items-center space-y-6 w-full">
         {/* Summarization: GitHub Copilot */}
