@@ -143,6 +143,29 @@ pub async fn validate_transcription_model_ready<R: Runtime>(app: &AppHandle<R>) 
                 }
             }
         }
+        "azure" => {
+            info!("☁️ Validating Azure Speech transcription config...");
+            // Cloud engine: no local model. Just require key + region.
+            if config
+                .azure_speech_key
+                .as_ref()
+                .map(|k| k.trim().is_empty())
+                .unwrap_or(true)
+                || config
+                    .azure_speech_region
+                    .as_ref()
+                    .map(|r| r.trim().is_empty())
+                    .unwrap_or(true)
+            {
+                warn!("❌ Azure transcription selected but key/region missing");
+                return Err(
+                    "Azure Speech transcription requires a key and region. Please configure them in Settings."
+                        .to_string(),
+                );
+            }
+            info!("✅ Azure Speech transcription config valid");
+            Ok(())
+        }
         other => {
             warn!("❌ Unsupported transcription provider for local recording: {}", other);
             Err(format!(
@@ -226,6 +249,36 @@ pub async fn get_or_init_transcription_engine<R: Runtime>(
                 None => {
                     Err("Parakeet engine not initialized. This should not happen after validation.".to_string())
                 }
+            }
+        }
+        "azure" => {
+            info!("☁️ Initializing Azure Speech realtime transcription engine");
+            let key = config
+                .azure_speech_key
+                .clone()
+                .filter(|k| !k.trim().is_empty())
+                .ok_or_else(|| "Azure transcription requires a Speech key".to_string())?;
+            let region = config
+                .azure_speech_region
+                .clone()
+                .filter(|r| !r.trim().is_empty())
+                .ok_or_else(|| "Azure transcription requires a region".to_string())?;
+
+            match crate::audio::transcription::worker::get_or_create_azure_realtime_client(
+                key, region,
+            )
+            .await
+            {
+                Some(client) => {
+                    info!("✅ Azure realtime transcription client ready");
+                    let provider = std::sync::Arc::new(
+                        crate::audio::transcription::AzureRealtimeTranscriptionProvider::new(client),
+                    );
+                    Ok(TranscriptionEngine::Provider(provider))
+                }
+                None => Err(
+                    "Failed to create Azure realtime client (check key/region).".to_string(),
+                ),
             }
         }
         "localWhisper" | _ => {
