@@ -287,6 +287,56 @@ fn extract_speaker_label(payload: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Extract transcript text from an Azure Speech recognition payload.
+///
+/// Azure emits recognized text in a few shapes depending on the result type:
+/// - Top-level `DisplayText` (Speech-to-Text `RecognizedSpeech` frames)
+/// - `NBest[0].Display` (rich results with an N-best list) — preferred, best formatted
+/// - `NBest[0].Lexical` (fallback when Display is absent)
+/// - Top-level `Text` (some streaming/partial frames)
+///
+/// Returns None for frames that carry no transcript (e.g. pure speaker events,
+/// session/turn control frames), or when the text is empty/whitespace.
+#[allow(dead_code)] // Wired into the streaming path in the follow-up commit; unit-tested now.
+fn extract_transcript_text(payload: &Value) -> Option<String> {
+    // Prefer NBest[0].Display / .Lexical (richest, punctuated).
+    if let Some(first) = payload
+        .get("NBest")
+        .and_then(Value::as_array)
+        .and_then(|arr| arr.first())
+    {
+        if let Some(display) = first
+            .get("Display")
+            .or_else(|| first.get("display"))
+            .and_then(Value::as_str)
+        {
+            if !display.trim().is_empty() {
+                return Some(display.trim().to_string());
+            }
+        }
+        if let Some(lexical) = first
+            .get("Lexical")
+            .or_else(|| first.get("lexical"))
+            .and_then(Value::as_str)
+        {
+            if !lexical.trim().is_empty() {
+                return Some(lexical.trim().to_string());
+            }
+        }
+    }
+
+    // Fall back to top-level DisplayText / Text.
+    for key in ["DisplayText", "displayText", "Text", "text"] {
+        if let Some(s) = payload.get(key).and_then(Value::as_str) {
+            if !s.trim().is_empty() {
+                return Some(s.trim().to_string());
+            }
+        }
+    }
+
+    None
+}
+
 fn extract_tick_value(payload: &Value, keys: &[&str]) -> Option<f64> {
     for key in keys {
         if let Some(value) = payload.get(*key) {
@@ -349,6 +399,60 @@ mod tests {
         assert_eq!(event.speaker, "Guest-1");
         assert!((event.start_sec - 1.0).abs() < 0.0001);
         assert!((event.end_sec - 4.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn extracts_text_from_display_text() {
+        let payload = extract_json_payload(
+            "Path: speech.phrase\r\nContent-Type: application/json\r\n\r\n{\"RecognitionStatus\":\"Success\",\"DisplayText\":\"Hello world.\",\"Offset\":0,\"Duration\":20000000}",
+        )
+        .expect("payload");
+        assert_eq!(extract_transcript_text(&payload).as_deref(), Some("Hello world."));
+    }
+
+    #[test]
+    fn extracts_text_prefers_nbest_display() {
+        // When both NBest[0].Display and top-level DisplayText exist, prefer NBest Display.
+        let payload: Value = serde_json::from_str(
+            r#"{"DisplayText":"lower quality","NBest":[{"Display":"Best formatted text.","Lexical":"best formatted text"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            extract_transcript_text(&payload).as_deref(),
+            Some("Best formatted text.")
+        );
+    }
+
+    #[test]
+    fn extracts_text_falls_back_to_lexical_then_text() {
+        let lexical_only: Value =
+            serde_json::from_str(r#"{"NBest":[{"Lexical":"raw words here"}]}"#).unwrap();
+        assert_eq!(
+            extract_transcript_text(&lexical_only).as_deref(),
+            Some("raw words here")
+        );
+
+        let text_only: Value = serde_json::from_str(r#"{"Text":"partial hypothesis"}"#).unwrap();
+        assert_eq!(
+            extract_transcript_text(&text_only).as_deref(),
+            Some("partial hypothesis")
+        );
+    }
+
+    #[test]
+    fn extracts_no_text_from_speaker_only_or_control_frames() {
+        // Pure speaker event — no transcript fields.
+        let speaker_only: Value =
+            serde_json::from_str(r#"{"SpeakerId":"Guest-1","Offset":10000000}"#).unwrap();
+        assert_eq!(extract_transcript_text(&speaker_only), None);
+
+        // Empty / whitespace text must not be treated as a transcript.
+        let empty: Value = serde_json::from_str(r#"{"DisplayText":"   "}"#).unwrap();
+        assert_eq!(extract_transcript_text(&empty), None);
+
+        // Turn/session control frame.
+        let control: Value = serde_json::from_str(r#"{"RecognitionStatus":"EndOfDictation"}"#).unwrap();
+        assert_eq!(extract_transcript_text(&control), None);
     }
 
     #[test]
