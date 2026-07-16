@@ -11,7 +11,7 @@ import { ParakeetModelManager } from './ParakeetModelManager';
 
 
 export interface TranscriptModelProps {
-    provider: 'localWhisper' | 'parakeet' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
+    provider: 'localWhisper' | 'parakeet' | 'azure' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
     model: string;
     apiKey?: string | null;
     diarizationEnabled?: boolean;
@@ -141,7 +141,14 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                 onValueChange={(value) => {
                                     const provider = value as TranscriptModelProps['provider'];
                                     setUiProvider(provider);
-                                    if (provider !== 'localWhisper' && provider !== 'parakeet') {
+                                    if (provider === 'azure') {
+                                        // Azure uses key+region (below), not the generic apiKey/model.
+                                        setTranscriptModelConfig({
+                                            ...transcriptModelConfig,
+                                            provider: 'azure',
+                                            model: 'azure-realtime',
+                                        });
+                                    } else if (provider !== 'localWhisper' && provider !== 'parakeet') {
                                         fetchApiKey(provider);
                                     }
                                 }}
@@ -152,6 +159,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                 <SelectContent>
                                     <SelectItem value="parakeet">⚡ Parakeet (Recommended - Real-time / Accurate)</SelectItem>
                                     <SelectItem value="localWhisper">🏠 Local Whisper (High Accuracy)</SelectItem>
+                                    <SelectItem value="azure">☁️ Azure Speech (Cloud - key + region)</SelectItem>
                                     {/* <SelectItem value="deepgram">☁️ Deepgram (Backup)</SelectItem>
                                     <SelectItem value="elevenLabs">☁️ ElevenLabs</SelectItem>
                                     <SelectItem value="groq">☁️ Groq</SelectItem>
@@ -159,7 +167,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                 </SelectContent>
                             </Select>
 
-                            {uiProvider !== 'localWhisper' && uiProvider !== 'parakeet' && (
+                            {uiProvider !== 'localWhisper' && uiProvider !== 'parakeet' && uiProvider !== 'azure' && (
                                 <Select
                                     value={transcriptModelConfig.model}
                                     onValueChange={(value) => {
@@ -180,6 +188,35 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
 
                         </div>
                     </div>
+
+                    {uiProvider === 'azure' && (
+                        <div className="mt-4 border border-gray-200 rounded-md p-3 space-y-3">
+                            <p className="text-sm text-gray-600">
+                                Azure Speech transcribes your meeting in the cloud — no local model
+                                needed. Enter your Speech resource key and region.
+                            </p>
+                            <div>
+                                <Label className="block text-sm font-medium text-gray-700 mb-1">Azure Speech Key</Label>
+                                <Input
+                                    type="password"
+                                    className='focus:ring-1 focus:ring-blue-500 focus:border-blue-500'
+                                    value={azureSpeechKey}
+                                    onChange={(e) => setAzureSpeechKey(e.target.value)}
+                                    placeholder="Enter Azure Speech key"
+                                />
+                            </div>
+                            <div>
+                                <Label className="block text-sm font-medium text-gray-700 mb-1">Azure Region</Label>
+                                <Input
+                                    type="text"
+                                    className='focus:ring-1 focus:ring-blue-500 focus:border-blue-500'
+                                    value={azureSpeechRegion}
+                                    onChange={(e) => setAzureSpeechRegion(e.target.value)}
+                                    placeholder="e.g. centralus"
+                                />
+                            </div>
+                        </div>
+                    )}
 
                     {uiProvider === 'localWhisper' && (
                         <div className="mt-6">

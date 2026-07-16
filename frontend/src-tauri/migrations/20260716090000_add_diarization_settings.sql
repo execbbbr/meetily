@@ -1,4 +1,16 @@
-ALTER TABLE transcript_settings ADD COLUMN diarizationEnabled INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE transcript_settings ADD COLUMN diarizationProvider TEXT NOT NULL DEFAULT 'local';
-ALTER TABLE transcript_settings ADD COLUMN azureSpeechKey TEXT;
-ALTER TABLE transcript_settings ADD COLUMN azureSpeechRegion TEXT;
+-- NOTE: This migration is intentionally a no-op.
+--
+-- The diarization columns (diarizationEnabled, diarizationProvider,
+-- azureSpeechKey, azureSpeechRegion) are ALREADY defined in the initial schema
+-- (20250916100000_initial_schema.sql) on the transcript_settings table.
+--
+-- A previous version of this migration re-added those columns with
+-- `ALTER TABLE ... ADD COLUMN`, which fails on any fresh database with
+-- "duplicate column name: diarizationEnabled", aborting first-launch DB
+-- creation entirely. Since the columns already exist from the initial schema,
+-- there is nothing to do here.
+--
+-- The file is kept (not deleted) so the migration version remains recorded for
+-- databases that already applied an earlier form of it. SQLite has no
+-- `ADD COLUMN IF NOT EXISTS`, so a no-op is the correct fix.
+SELECT 1;

@@ -15,6 +15,23 @@ pub async fn initialize_database_on_startup(app: &AppHandle) -> Result<(), Strin
     if is_first_launch {
         info!("First launch detected - will notify window when ready");
 
+        // Initialize a fresh database and register AppState immediately, even on
+        // first launch. Onboarding may call DB-backed commands (e.g. Copilot
+        // login persisting credentials, saving Azure transcript config) before
+        // the user finishes setup; without AppState managed here those commands
+        // fail with "state not managed". If the user later imports a legacy
+        // database during onboarding, import_and_initialize_database re-manages
+        // AppState, transparently replacing this fresh one.
+        match DatabaseManager::new_from_app_handle(app).await {
+            Ok(db_manager) => {
+                app.manage(AppState { db_manager });
+                info!("Fresh database initialized and AppState managed on first launch");
+            }
+            Err(e) => {
+                info!("First-launch fresh DB init failed (will retry via onboarding): {}", e);
+            }
+        }
+
         // Delay event emission to ensure window is ready and React listeners are registered
         let app_handle = app.clone();
         tauri::async_runtime::spawn(async move {

@@ -15,6 +15,7 @@ use crate::database::repositories::setting::SettingsRepository;
 use crate::state::AppState;
 use serde::Serialize;
 use tauri::{AppHandle, Runtime};
+use tauri_plugin_opener::OpenerExt;
 
 #[derive(Debug, Serialize)]
 pub struct CopilotLoginStart {
@@ -41,8 +42,18 @@ pub struct CopilotStatus {
 
 /// Step 1: begin device flow. Frontend shows user_code + verification_uri.
 #[tauri::command]
-pub async fn copilot_start_login<R: Runtime>(_app: AppHandle<R>) -> Result<CopilotLoginStart, String> {
+pub async fn copilot_start_login<R: Runtime>(app: AppHandle<R>) -> Result<CopilotLoginStart, String> {
     let info: DeviceCodeInfo = oauth::start_device_flow().await?;
+
+    // Open the GitHub verification page in the system browser automatically.
+    // The Tauri webview does not follow `<a target="_blank">` to an external
+    // browser, so without this the user sees a code but nothing opens. Uses the
+    // official tauri-plugin-opener. Best-effort: a failure is logged but never
+    // blocks login (the UI still shows the code + a manual "Open GitHub" link).
+    if let Err(e) = app.opener().open_url(info.verification_uri.clone(), None::<&str>) {
+        log::warn!("Failed to open browser for Copilot login: {e}");
+    }
+
     Ok(CopilotLoginStart {
         device_code: info.device_code,
         user_code: info.user_code,

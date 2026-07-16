@@ -21,6 +21,28 @@ static SPEECH_DETECTED_EMITTED: AtomicBool = AtomicBool::new(false);
 static AZURE_REALTIME_DIARIZER: Lazy<tokio::sync::RwLock<Option<crate::audio::diarization::AzureRealtimeDiarizationClient>>> =
     Lazy::new(|| tokio::sync::RwLock::new(None));
 
+/// Get or create the shared Azure realtime client for the given key/region.
+/// The same persistent WebSocket serves both transcription (recognized text)
+/// and diarization (speaker events) — Plan A. Returns None if credentials are
+/// blank or the client fails to construct.
+pub async fn get_or_create_azure_realtime_client(
+    key: String,
+    region: String,
+) -> Option<crate::audio::diarization::AzureRealtimeDiarizationClient> {
+    let mut guard = AZURE_REALTIME_DIARIZER.write().await;
+    if guard.is_none() {
+        *guard = crate::audio::diarization::AzureRealtimeDiarizationClient::new(key, region);
+    }
+    guard.clone()
+}
+
+/// Tear down the shared Azure realtime client (e.g. when switching away from
+/// Azure). Safe to call repeatedly.
+pub async fn clear_azure_realtime_client() {
+    let mut guard = AZURE_REALTIME_DIARIZER.write().await;
+    *guard = None;
+}
+
 /// Reset the speech detected flag for a new recording session
 pub fn reset_speech_detected_flag() {
     SPEECH_DETECTED_EMITTED.store(false, Ordering::SeqCst);

@@ -17,6 +17,16 @@ struct SpeakerEvent {
     end_sec: f64,
 }
 
+/// A recognized transcript phrase with its time window, captured from the same
+/// Azure realtime WebSocket that yields speaker events. Plan A: one connection
+/// carries both text (speech.phrase / speech.hypothesis frames) and speaker.
+#[derive(Clone, Debug)]
+struct TranscriptEvent {
+    text: String,
+    start_sec: f64,
+    end_sec: f64,
+}
+
 #[derive(Clone, Debug)]
 struct AudioPacket {
     request_id: String,
@@ -26,6 +36,7 @@ struct AudioPacket {
 #[derive(Clone, Debug)]
 pub struct AzureRealtimeDiarizationClient {
     speaker_events: Arc<RwLock<Vec<SpeakerEvent>>>,
+    transcript_events: Arc<RwLock<Vec<TranscriptEvent>>>,
     outbound_tx: mpsc::UnboundedSender<AudioPacket>,
 }
 
@@ -36,17 +47,28 @@ impl AzureRealtimeDiarizationClient {
         }
 
         let speaker_events = Arc::new(RwLock::new(Vec::new()));
+        let transcript_events = Arc::new(RwLock::new(Vec::new()));
         let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
 
         let events_for_task = speaker_events.clone();
+        let transcripts_for_task = transcript_events.clone();
         tokio::spawn(async move {
-            if let Err(err) = run_ws_session(key, region, outbound_rx, events_for_task).await {
-                warn!("Azure realtime diarization session stopped: {}", err);
+            if let Err(err) = run_ws_session(
+                key,
+                region,
+                outbound_rx,
+                events_for_task,
+                transcripts_for_task,
+            )
+            .await
+            {
+                warn!("Azure realtime session stopped: {}", err);
             }
         });
 
         Some(Self {
             speaker_events,
+            transcript_events,
             outbound_tx,
         })
     }
@@ -78,6 +100,76 @@ impl AzureRealtimeDiarizationClient {
         let events = self.speaker_events.read().await;
         choose_speaker_for_window(&events, start_sec, end_sec)
     }
+
+    /// Return recognized transcript text overlapping the given time window,
+    /// draining consumed events so each phrase is only returned once. Used by
+    /// the Azure realtime transcription provider (Plan A): the same WebSocket
+    /// that yields speaker events also yields recognized phrases.
+    pub async fn take_text_for_window(&self, start_sec: f64, end_sec: f64) -> Option<String> {
+        let mut events = self.transcript_events.write().await;
+        if events.is_empty() {
+            return None;
+        }
+
+        let mut matched: Vec<(f64, String)> = Vec::new();
+        events.retain(|ev| {
+            let overlaps = ev.start_sec < end_sec && ev.end_sec > start_sec;
+            if overlaps {
+                matched.push((ev.start_sec, ev.text.clone()));
+                false // consume it
+            } else {
+                true
+            }
+        });
+
+        if matched.is_empty() {
+            return None;
+        }
+
+        matched.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let joined = matched
+            .into_iter()
+            .map(|(_, t)| t)
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string();
+
+        if joined.is_empty() {
+            None
+        } else {
+            Some(joined)
+        }
+    }
+
+    /// Drain and return ALL pending recognized text (oldest first), clearing the
+    /// buffer. Used by the realtime transcription provider, which pushes audio
+    /// then collects whatever finals Azure has emitted so far. Because the
+    /// worker calls transcribe() sequentially per VAD chunk and Azure returns
+    /// finals in order, draining after each push roughly tracks the audio.
+    pub async fn take_all_pending_text(&self) -> Option<String> {
+        let mut events = self.transcript_events.write().await;
+        if events.is_empty() {
+            return None;
+        }
+        events.sort_by(|a, b| {
+            a.start_sec
+                .partial_cmp(&b.start_sec)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let joined = events
+            .drain(..)
+            .map(|e| e.text)
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string();
+        if joined.is_empty() {
+            None
+        } else {
+            Some(joined)
+        }
+    }
 }
 
 async fn run_ws_session(
@@ -85,6 +177,7 @@ async fn run_ws_session(
     region: String,
     mut outbound_rx: mpsc::UnboundedReceiver<AudioPacket>,
     speaker_events: Arc<RwLock<Vec<SpeakerEvent>>>,
+    transcript_events: Arc<RwLock<Vec<TranscriptEvent>>>,
 ) -> Result<(), String> {
     let url = format!(
         "wss://{}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?format=detailed&language=en-US",
@@ -147,12 +240,22 @@ async fn run_ws_session(
             maybe_message = ws_read.next() => {
                 match maybe_message {
                     Some(Ok(Message::Text(frame))) => {
+                        // One frame may carry a speaker event and/or a recognized
+                        // phrase. Parse both; store whichever is present.
                         if let Some(event) = parse_speaker_event_from_frame(&frame) {
                             let mut events = speaker_events.write().await;
                             events.push(event);
                             if events.len() > MAX_EVENT_HISTORY {
                                 let drain_count = events.len() - MAX_EVENT_HISTORY;
                                 events.drain(0..drain_count);
+                            }
+                        }
+                        if let Some(t) = parse_transcript_event_from_frame(&frame) {
+                            let mut texts = transcript_events.write().await;
+                            texts.push(t);
+                            if texts.len() > MAX_EVENT_HISTORY {
+                                let drain_count = texts.len() - MAX_EVENT_HISTORY;
+                                texts.drain(0..drain_count);
                             }
                         }
                     }
@@ -191,6 +294,77 @@ fn parse_speaker_event_from_frame(frame: &str) -> Option<SpeakerEvent> {
         start_sec,
         end_sec,
     })
+}
+
+/// Parse a recognized transcript phrase from an Azure realtime frame.
+///
+/// Azure emits recognition results on `Path: speech.phrase` (final) and
+/// `Path: speech.hypothesis` (partial) frames. We only capture FINAL phrases
+/// (speech.phrase with RecognitionStatus "Success") to avoid duplicated partial
+/// text. Text is read from DisplayText / NBest[0].Display|Lexical / Text.
+fn parse_transcript_event_from_frame(frame: &str) -> Option<TranscriptEvent> {
+    // Only final phrases. Hypotheses are partial and would duplicate.
+    let is_phrase = frame
+        .lines()
+        .take_while(|l| !l.is_empty())
+        .any(|l| l.to_ascii_lowercase().starts_with("path:") && l.to_ascii_lowercase().contains("speech.phrase"));
+    if !is_phrase {
+        return None;
+    }
+
+    let payload = extract_json_payload(frame)?;
+
+    // If a RecognitionStatus is present, require Success. Some payloads omit it.
+    if let Some(status) = payload.get("RecognitionStatus").and_then(Value::as_str) {
+        if status != "Success" {
+            return None;
+        }
+    }
+
+    let text = extract_transcript_text(&payload)?;
+    if text.trim().is_empty() {
+        return None;
+    }
+
+    let offset_ticks =
+        extract_tick_value(&payload, &["Offset", "OffsetInTicks", "AudioOffset"]).unwrap_or(0.0);
+    let duration_ticks =
+        extract_tick_value(&payload, &["Duration", "DurationInTicks"]).unwrap_or(2.0 * TICKS_PER_SECOND);
+
+    let start_sec = offset_ticks / TICKS_PER_SECOND;
+    let end_sec = (offset_ticks + duration_ticks) / TICKS_PER_SECOND;
+
+    Some(TranscriptEvent {
+        text: text.trim().to_string(),
+        start_sec,
+        end_sec: end_sec.max(start_sec),
+    })
+}
+
+/// Extract recognized text from an Azure Speech payload, preferring the richest
+/// formatted variant: NBest[0].Display > NBest[0].Lexical > DisplayText > Text.
+fn extract_transcript_text(payload: &Value) -> Option<String> {
+    if let Some(first) = payload
+        .get("NBest")
+        .and_then(Value::as_array)
+        .and_then(|arr| arr.first())
+    {
+        for key in ["Display", "Lexical"] {
+            if let Some(s) = first.get(key).and_then(Value::as_str) {
+                if !s.trim().is_empty() {
+                    return Some(s.trim().to_string());
+                }
+            }
+        }
+    }
+    for key in ["DisplayText", "Text"] {
+        if let Some(s) = payload.get(key).and_then(Value::as_str) {
+            if !s.trim().is_empty() {
+                return Some(s.trim().to_string());
+            }
+        }
+    }
+    None
 }
 
 fn choose_speaker_for_window(events: &[SpeakerEvent], start_sec: f64, end_sec: f64) -> Option<String> {
@@ -333,6 +507,71 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_transcript_text_from_phrase_frame() {
+        let frame = "Path: speech.phrase\r\nContent-Type: application/json\r\n\r\n{\"RecognitionStatus\":\"Success\",\"DisplayText\":\"Hello world.\",\"Offset\":10000000,\"Duration\":20000000}";
+        let ev = parse_transcript_event_from_frame(frame).expect("transcript event");
+        assert_eq!(ev.text, "Hello world.");
+        assert!((ev.start_sec - 1.0).abs() < 0.0001);
+        assert!((ev.end_sec - 3.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn prefers_nbest_display_over_displaytext() {
+        let frame = "Path: speech.phrase\r\n\r\n{\"RecognitionStatus\":\"Success\",\"DisplayText\":\"lower\",\"NBest\":[{\"Display\":\"Best text.\",\"Lexical\":\"best text\"}],\"Offset\":0,\"Duration\":10000000}";
+        let ev = parse_transcript_event_from_frame(frame).expect("event");
+        assert_eq!(ev.text, "Best text.");
+    }
+
+    #[test]
+    fn ignores_hypothesis_frames() {
+        // speech.hypothesis are partial results; must be ignored to avoid dupes.
+        let frame = "Path: speech.hypothesis\r\n\r\n{\"Text\":\"partial words\",\"Offset\":0,\"Duration\":5000000}";
+        assert!(parse_transcript_event_from_frame(frame).is_none());
+    }
+
+    #[test]
+    fn ignores_nonsuccess_status() {
+        let frame = "Path: speech.phrase\r\n\r\n{\"RecognitionStatus\":\"NoMatch\",\"Offset\":0,\"Duration\":5000000}";
+        assert!(parse_transcript_event_from_frame(frame).is_none());
+    }
+
+    #[tokio::test]
+    async fn take_text_for_window_returns_and_consumes_overlap() {
+        let events = Arc::new(RwLock::new(vec![
+            TranscriptEvent { text: "first".into(), start_sec: 0.0, end_sec: 2.0 },
+            TranscriptEvent { text: "second".into(), start_sec: 5.0, end_sec: 7.0 },
+        ]));
+        let client = AzureRealtimeDiarizationClient {
+            speaker_events: Arc::new(RwLock::new(Vec::new())),
+            transcript_events: events.clone(),
+            outbound_tx: mpsc::unbounded_channel().0,
+        };
+        // Window overlapping only the first event.
+        let text = client.take_text_for_window(0.0, 3.0).await;
+        assert_eq!(text.as_deref(), Some("first"));
+        // First event consumed; only the second remains.
+        let remaining = events.read().await;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].text, "second");
+    }
+
+    #[tokio::test]
+    async fn take_all_pending_text_joins_in_time_order() {
+        let events = Arc::new(RwLock::new(vec![
+            TranscriptEvent { text: "world".into(), start_sec: 2.0, end_sec: 3.0 },
+            TranscriptEvent { text: "hello".into(), start_sec: 0.0, end_sec: 1.0 },
+        ]));
+        let client = AzureRealtimeDiarizationClient {
+            speaker_events: Arc::new(RwLock::new(Vec::new())),
+            transcript_events: events.clone(),
+            outbound_tx: mpsc::unbounded_channel().0,
+        };
+        let text = client.take_all_pending_text().await;
+        assert_eq!(text.as_deref(), Some("hello world"));
+        assert!(events.read().await.is_empty());
+    }
 
     #[test]
     fn parses_speaker_event_from_headered_frame() {

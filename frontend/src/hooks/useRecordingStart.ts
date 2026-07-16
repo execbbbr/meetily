@@ -49,6 +49,21 @@ export function useRecordingStart(
     return `Meeting ${day}_${month}_${year}_${hours}_${minutes}_${seconds}`;
   }, []);
 
+  // Check whether transcription is configured to use a cloud provider (e.g.
+  // Azure). Cloud transcription needs no local Parakeet/Whisper model, so the
+  // local-model download gate must be skipped in that case.
+  const isCloudTranscription = useCallback(async (): Promise<boolean> => {
+    try {
+      const cfg = await invoke<any>('api_get_transcript_config');
+      const provider = (cfg?.provider ?? '').toString().toLowerCase();
+      // 'azure' is our cloud STT engine. localWhisper / parakeet are local.
+      return provider === 'azure';
+    } catch (error) {
+      console.error('Failed to read transcript config for provider check:', error);
+      return false; // Fail safe: fall back to requiring a local model.
+    }
+  }, []);
+
   // Check if Parakeet transcription model is ready
   const checkParakeetReady = useCallback(async (): Promise<boolean> => {
     try {
@@ -82,10 +97,12 @@ export function useRecordingStart(
   // Handle manual recording start (from button click)
   const handleRecordingStart = useCallback(async () => {
     try {
-      console.log('handleRecordingStart called - checking Parakeet model status');
+      console.log('handleRecordingStart called - checking transcription setup');
 
+      // Cloud transcription (Azure) needs no local model — skip the download gate.
+      const cloud = await isCloudTranscription();
       // Check if Parakeet transcription model is ready before starting
-      const parakeetReady = await checkParakeetReady();
+      const parakeetReady = cloud ? true : await checkParakeetReady();
       if (!parakeetReady) {
         const isDownloading = await checkIfModelDownloading();
         if (isDownloading) {
@@ -141,7 +158,7 @@ export function useRecordingStart(
       // Re-throw so RecordingControls can handle device-specific errors
       throw error;
     }
-  }, [generateMeetingTitle, setMeetingTitle, setIsRecording, clearTranscripts, setIsMeetingActive, checkParakeetReady, checkIfModelDownloading, selectedDevices, showModal, setStatus]);
+  }, [generateMeetingTitle, setMeetingTitle, setIsRecording, clearTranscripts, setIsMeetingActive, checkParakeetReady, checkIfModelDownloading, isCloudTranscription, selectedDevices, showModal, setStatus]);
 
   // Check for autoStartRecording flag and start recording automatically
   useEffect(() => {
@@ -153,8 +170,10 @@ export function useRecordingStart(
           setIsAutoStarting(true);
           sessionStorage.removeItem('autoStartRecording'); // Clear the flag
 
+          // Cloud transcription (Azure) needs no local model — skip the gate.
+          const cloudAuto = await isCloudTranscription();
           // Check if Parakeet transcription model is ready before starting
-          const parakeetReady = await checkParakeetReady();
+          const parakeetReady = cloudAuto ? true : await checkParakeetReady();
           if (!parakeetReady) {
             const isDownloading = await checkIfModelDownloading();
             if (isDownloading) {
