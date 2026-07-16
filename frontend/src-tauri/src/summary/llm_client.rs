@@ -73,6 +73,7 @@ pub enum LLMProvider {
     OpenRouter,
     BuiltInAI,
     CustomOpenAI,
+    GitHubCopilot,
 }
 
 impl LLMProvider {
@@ -86,6 +87,7 @@ impl LLMProvider {
             "openrouter" => Ok(Self::OpenRouter),
             "builtin-ai" | "local-llama" | "localllama" => Ok(Self::BuiltInAI),
             "custom-openai" => Ok(Self::CustomOpenAI),
+            "github-copilot" | "copilot" => Ok(Self::GitHubCopilot),
             _ => Err(format!("Unsupported LLM provider: {}", s)),
         }
     }
@@ -193,6 +195,23 @@ pub async fn generate_summary(
                     .map_err(|_| "Invalid anthropic version".to_string())?,
             );
             ("https://api.anthropic.com/v1/messages".to_string(), header_map)
+        }
+        LLMProvider::GitHubCopilot => {
+            // The copilot base URL (derived from the token proxy-ep) is passed in
+            // via custom_openai_endpoint; the copilot token is passed as api_key.
+            let endpoint = custom_openai_endpoint
+                .ok_or_else(|| "GitHub Copilot base URL not provided".to_string())?;
+            let mut header_map = header::HeaderMap::new();
+            // Copilot requires VS-Code-plugin-identifying headers.
+            for (k, v) in crate::copilot_auth::copilot_headers() {
+                let name = header::HeaderName::from_static(k);
+                let value = header::HeaderValue::from_static(v);
+                header_map.insert(name, value);
+            }
+            (
+                format!("{}/chat/completions", endpoint.trim_end_matches('/')),
+                header_map,
+            )
         }
         LLMProvider::BuiltInAI => {
             // This case is handled earlier with early returns
@@ -342,5 +361,6 @@ fn provider_name(provider: &LLMProvider) -> &str {
         LLMProvider::BuiltInAI => "Built-in AI",
         LLMProvider::OpenRouter => "OpenRouter",
         LLMProvider::CustomOpenAI => "Custom OpenAI",
+        LLMProvider::GitHubCopilot => "GitHub Copilot",
     }
 }

@@ -57,6 +57,7 @@ pub mod whisper_engine;
 pub mod skill_export;
 pub mod video_frames;
 pub mod skill_vision;
+pub mod copilot_auth;
 
 use audio::{list_audio_devices, AudioDevice, trigger_audio_permission};
 use log::{error as log_error, info as log_info};
@@ -683,6 +684,13 @@ pub fn run() {
             video_frames::commands::extract_video_keyframes,
             // Skill vision commands
             skill_vision::commands::generate_skill_with_vision,
+            // GitHub Copilot OAuth commands
+            copilot_auth::commands::copilot_start_login,
+            copilot_auth::commands::copilot_poll_login,
+            copilot_auth::commands::copilot_get_valid_token,
+            copilot_auth::commands::copilot_status,
+            copilot_auth::commands::copilot_logout,
+            copilot_auth::commands::copilot_list_models,
             // Built-in AI commands
             summary::summary_engine::commands::builtin_ai_list_models,
             summary::summary_engine::commands::builtin_ai_get_model_info,
