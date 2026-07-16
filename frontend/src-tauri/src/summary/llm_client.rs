@@ -209,7 +209,7 @@ pub async fn generate_summary(
                 header_map.insert(name, value);
             }
             (
-                format!("{}/chat/completions", endpoint.trim_end_matches('/')),
+                crate::copilot_auth::oauth::chat_completions_url(endpoint),
                 header_map,
             )
         }
@@ -362,5 +362,37 @@ fn provider_name(provider: &LLMProvider) -> &str {
         LLMProvider::OpenRouter => "OpenRouter",
         LLMProvider::CustomOpenAI => "Custom OpenAI",
         LLMProvider::GitHubCopilot => "GitHub Copilot",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_copilot_provider_aliases() {
+        assert_eq!(
+            LLMProvider::from_str("github-copilot"),
+            Ok(LLMProvider::GitHubCopilot)
+        );
+        assert_eq!(
+            LLMProvider::from_str("copilot"),
+            Ok(LLMProvider::GitHubCopilot)
+        );
+        // case-insensitive
+        assert_eq!(
+            LLMProvider::from_str("GitHub-Copilot"),
+            Ok(LLMProvider::GitHubCopilot)
+        );
+    }
+
+    #[test]
+    fn copilot_provider_has_display_name() {
+        assert_eq!(provider_name(&LLMProvider::GitHubCopilot), "GitHub Copilot");
+    }
+
+    #[test]
+    fn unknown_provider_rejected() {
+        assert!(LLMProvider::from_str("nonsense").is_err());
     }
 }

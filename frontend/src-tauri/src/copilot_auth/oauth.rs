@@ -219,6 +219,12 @@ pub fn base_url_from_token(token: &str) -> Option<String> {
     Some(format!("https://{}", api_host))
 }
 
+/// Build the OpenAI-compatible chat-completions URL for a Copilot base URL.
+/// Pure helper so the LLM layer and tests share one source of truth.
+pub fn chat_completions_url(base_url: &str) -> String {
+    format!("{}/chat/completions", base_url.trim_end_matches('/'))
+}
+
 /// A model the user's Copilot subscription can use for chat.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CopilotModel {
@@ -378,6 +384,34 @@ mod tests {
         let models = parse_available_models(&json);
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].name, "some-model");
+    }
+
+    #[test]
+    fn chat_completions_url_appends_path() {
+        assert_eq!(
+            chat_completions_url("https://api.individual.githubcopilot.com"),
+            "https://api.individual.githubcopilot.com/chat/completions"
+        );
+    }
+
+    #[test]
+    fn chat_completions_url_strips_trailing_slash() {
+        assert_eq!(
+            chat_completions_url("https://api.individual.githubcopilot.com/"),
+            "https://api.individual.githubcopilot.com/chat/completions"
+        );
+    }
+
+    #[test]
+    fn copilot_headers_include_vscode_identity() {
+        let headers = copilot_headers();
+        let integration = headers
+            .iter()
+            .find(|(k, _)| *k == "Copilot-Integration-Id")
+            .map(|(_, v)| *v);
+        assert_eq!(integration, Some("vscode-chat"));
+        // Editor-Version must be present so Copilot accepts the request.
+        assert!(headers.iter().any(|(k, _)| *k == "Editor-Version"));
     }
 
     #[test]
