@@ -147,6 +147,13 @@ async fn run_ws_session(
             maybe_message = ws_read.next() => {
                 match maybe_message {
                     Some(Ok(Message::Text(frame))) => {
+                        // Diagnostic: dump raw Azure frames to confirm whether the
+                        // speaker-recognition stream also carries transcript text
+                        // (DisplayText / NBest[].Display). Enable with
+                        // MEETILY_AZURE_FRAME_DEBUG=1; silent otherwise.
+                        if std::env::var("MEETILY_AZURE_FRAME_DEBUG").is_ok() {
+                            log::info!("[azure-frame] {}", frame);
+                        }
                         if let Some(event) = parse_speaker_event_from_frame(&frame) {
                             let mut events = speaker_events.write().await;
                             events.push(event);
