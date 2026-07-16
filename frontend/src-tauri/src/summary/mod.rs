@@ -30,6 +30,14 @@ pub struct CustomOpenAIConfig {
     pub top_p: Option<f32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillVisionConfig {
+    pub endpoint: String,
+    #[serde(rename = "apiKey")]
+    pub api_key: Option<String>,
+    pub model: String,
+}
+
 pub mod commands;
 pub(crate) mod language_detection;
 pub mod llm_client;

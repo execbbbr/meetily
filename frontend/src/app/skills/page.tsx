@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -26,6 +26,17 @@ interface SummaryStatusResponse {
     markdown?: string;
   };
   error?: string;
+}
+
+interface KeyFrame {
+  timestamp_secs: number;
+  image_path: string;
+}
+
+interface VisionEndpointConfig {
+  endpoint: string;
+  apiKey: string | null;
+  model: string;
 }
 
 function inferSkillName(markdown: string): string {
@@ -67,11 +78,40 @@ export default function SkillsPage() {
   const [markdown, setMarkdown] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [visualModeEnabled, setVisualModeEnabled] = useState(true);
+  const [meetingHasVideo, setMeetingHasVideo] = useState(false);
+  const [extractedFrames, setExtractedFrames] = useState<KeyFrame[]>([]);
 
   const selectedMeeting = useMemo(
     () => meetings.find((meeting) => meeting.id === selectedMeetingId) ?? null,
     [meetings, selectedMeetingId]
   );
+
+  useEffect(() => {
+    if (!selectedMeetingId) {
+      setMeetingHasVideo(false);
+      setVisualModeEnabled(true);
+      setExtractedFrames([]);
+      return;
+    }
+
+    const detectVideo = async () => {
+      try {
+        const frames = await invoke<KeyFrame[]>('extract_video_keyframes', {
+          meetingId: selectedMeetingId,
+          maxFrames: 1,
+        });
+        const hasVideo = frames.length > 0;
+        setMeetingHasVideo(hasVideo);
+        setVisualModeEnabled(hasVideo);
+      } catch {
+        setMeetingHasVideo(false);
+        setVisualModeEnabled(false);
+      }
+    };
+
+    detectVideo();
+  }, [selectedMeetingId]);
 
   const fetchAllTranscripts = async (meetingId: string): Promise<Transcript[]> => {
     const firstPage = await invoke<MeetingTranscriptsResponse>('api_get_meeting_transcripts', {
@@ -120,6 +160,23 @@ export default function SkillsPage() {
       .join('\n');
   };
 
+  const buildTimelineText = (transcripts: Transcript[]): string => {
+    const sorted = [...transcripts].sort(
+      (a, b) => (a.audio_start_time ?? Number.MAX_SAFE_INTEGER) - (b.audio_start_time ?? Number.MAX_SAFE_INTEGER)
+    );
+
+    return sorted
+      .map((entry) => {
+        const totalSeconds = Math.floor(entry.audio_start_time ?? 0);
+        const minutes = Math.floor(totalSeconds / 60)
+          .toString()
+          .padStart(2, '0');
+        const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+        return `[${minutes}:${seconds}] ${entry.text}`;
+      })
+      .join('\n');
+  };
+
   const waitForSummary = async (meetingId: string): Promise<string> => {
     const maxPolls = 200;
 
@@ -142,6 +199,25 @@ export default function SkillsPage() {
     throw new Error('Skill generation timed out after 5 minutes.');
   };
 
+  const generateAudioOnlySkill = async (selectedMeetingId: string, transcripts: Transcript[]) => {
+    const transcriptText = buildTranscriptText(transcripts);
+    const summaryLanguage = await getSummaryLanguage(selectedMeetingId);
+
+    const start = await invoke<ProcessTranscriptResponse>('api_process_transcript', {
+      text: transcriptText,
+      model: modelConfig.provider,
+      modelName: modelConfig.model,
+      meetingId: selectedMeetingId,
+      chunkSize: 40000,
+      overlap: 1000,
+      customPrompt: '',
+      templateId: 'skill_generator',
+      summaryLanguage,
+    });
+
+    return waitForSummary(start.process_id);
+  };
+
   const handleGenerateSkill = async () => {
     if (!selectedMeetingId) {
       toast.error('Please select a meeting first.');
@@ -149,6 +225,8 @@ export default function SkillsPage() {
     }
 
     setIsGenerating(true);
+    setExtractedFrames([]);
+
     try {
       const transcripts = await fetchAllTranscripts(selectedMeetingId);
       if (!transcripts.length) {
@@ -156,22 +234,52 @@ export default function SkillsPage() {
         return;
       }
 
-      const transcriptText = buildTranscriptText(transcripts);
-      const summaryLanguage = await getSummaryLanguage(selectedMeetingId);
+      const useVisualPath = meetingHasVideo && visualModeEnabled;
 
-      const start = await invoke<ProcessTranscriptResponse>('api_process_transcript', {
-        text: transcriptText,
-        model: modelConfig.provider,
-        modelName: modelConfig.model,
-        meetingId: selectedMeetingId,
-        chunkSize: 40000,
-        overlap: 1000,
-        customPrompt: '',
-        templateId: 'skill_generator',
-        summaryLanguage,
-      });
+      let generatedMarkdown: string;
+      if (useVisualPath) {
+        toast.message('Extracting keyframes for visual mode...');
 
-      const generatedMarkdown = await waitForSummary(start.process_id);
+        const keyframes = await invoke<KeyFrame[]>('extract_video_keyframes', {
+          meetingId: selectedMeetingId,
+          sceneThreshold: 0.4,
+          maxFrames: 40,
+          minIntervalSecs: 15,
+        });
+
+        if (!keyframes.length) {
+          toast.message('No keyframes found, falling back to audio-only generation.');
+          generatedMarkdown = await generateAudioOnlySkill(selectedMeetingId, transcripts);
+        } else {
+          setExtractedFrames(keyframes);
+
+          const visionConfig = (await invoke('api_get_skill_vision_config')) as VisionEndpointConfig | null;
+          if (!visionConfig?.endpoint || !visionConfig?.model) {
+            toast.message('Vision endpoint is not configured. Falling back to audio-only generation.');
+            generatedMarkdown = await generateAudioOnlySkill(selectedMeetingId, transcripts);
+          } else {
+            try {
+              generatedMarkdown = await invoke<string>('generate_skill_with_vision', {
+                meetingId: selectedMeetingId,
+                timelineText: buildTimelineText(transcripts),
+                keyframes,
+                endpointBaseUrl: visionConfig.endpoint,
+                apiKey: visionConfig.apiKey ?? '',
+                model: visionConfig.model,
+              });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              toast.message('Visual generation failed, falling back to audio-only generation.', {
+                description: message,
+              });
+              generatedMarkdown = await generateAudioOnlySkill(selectedMeetingId, transcripts);
+            }
+          }
+        }
+      } else {
+        generatedMarkdown = await generateAudioOnlySkill(selectedMeetingId, transcripts);
+      }
+
       setMarkdown(generatedMarkdown);
 
       const inferred = sanitizeDisplayName(inferSkillName(generatedMarkdown));
@@ -279,6 +387,18 @@ export default function SkillsPage() {
               {isGenerating ? 'Generating...' : 'Generate Skill'}
             </button>
 
+            {meetingHasVideo && (
+              <label className="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2 text-sm">
+                <span>🎬 Visual mode (with screen frames)</span>
+                <input
+                  type="checkbox"
+                  checked={visualModeEnabled}
+                  onChange={(e) => setVisualModeEnabled(e.target.checked)}
+                  className="h-4 w-4"
+                />
+              </label>
+            )}
+
             {selectedMeeting && (
               <p className="text-xs text-gray-500">
                 Using transcript from: <span className="font-medium">{selectedMeeting.title}</span>
@@ -307,6 +427,21 @@ export default function SkillsPage() {
 
           <div className="rounded-lg border bg-white p-4 shadow-sm lg:col-span-2 space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">SKILL.md Editor & Preview</h2>
+            {!!extractedFrames.length && (
+              <div className="space-y-2">
+                <p className="text-sm text-gray-600">Keyframes used: {extractedFrames.length}</p>
+                <div className="grid grid-cols-4 gap-2 max-h-40 overflow-y-auto">
+                  {extractedFrames.map((frame) => (
+                    <img
+                      key={`${frame.image_path}-${frame.timestamp_secs}`}
+                      src={`asset://${frame.image_path}`}
+                      alt={`keyframe-${frame.timestamp_secs}`}
+                      className="h-16 w-full object-cover rounded border"
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
             <textarea
               value={markdown}
               onChange={(e) => setMarkdown(e.target.value)}

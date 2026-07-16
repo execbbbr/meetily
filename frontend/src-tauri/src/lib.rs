@@ -55,6 +55,8 @@ pub mod tray;
 pub mod utils;
 pub mod whisper_engine;
 pub mod skill_export;
+pub mod video_frames;
+pub mod skill_vision;
 
 use audio::{list_audio_devices, AudioDevice, trigger_audio_permission};
 use log::{error as log_error, info as log_info};
@@ -658,6 +660,9 @@ pub fn run() {
             api::api_save_custom_openai_config,
             api::api_get_custom_openai_config,
             api::api_test_custom_openai_connection,
+            // Skill vision endpoint settings commands
+            api::api_get_skill_vision_config,
+            api::api_save_skill_vision_config,
             // Summary commands
             summary::commands::api_process_transcript,
             summary::commands::api_get_summary,
@@ -674,6 +679,10 @@ pub fn run() {
             summary::template_commands::api_validate_template,
             // Skill export commands
             skill_export::commands::export_skill,
+            // Video keyframe extraction commands
+            video_frames::commands::extract_video_keyframes,
+            // Skill vision commands
+            skill_vision::commands::generate_skill_with_vision,
             // Built-in AI commands
             summary::summary_engine::commands::builtin_ai_list_models,
             summary::summary_engine::commands::builtin_ai_get_model_info,

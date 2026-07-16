@@ -10,6 +10,7 @@ import { RecordingSettings } from '@/components/RecordingSettings';
 import { PreferenceSettings } from '@/components/PreferenceSettings';
 import { SummaryModelSettings } from '@/components/SummaryModelSettings';
 import { BetaSettings } from '@/components/BetaSettings';
+import { VisionEndpointSettings } from '@/components/VisionEndpointSettings';
 import { useConfig } from '@/contexts/ConfigContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
@@ -121,8 +122,9 @@ export default function SettingsPage() {
                 setTranscriptModelConfig={setTranscriptModelConfig}
               />
             </TabsContent>
-            <TabsContent value="summaryModels">
+            <TabsContent value="summaryModels" className="space-y-6">
               <SummaryModelSettings />
+              <VisionEndpointSettings />
             </TabsContent>
             <TabsContent value="beta" className="mt-6">
               <BetaSettings />

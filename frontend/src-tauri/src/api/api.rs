@@ -13,7 +13,7 @@ use crate::{
         },
     },
     state::AppState,
-    summary::CustomOpenAIConfig,
+    summary::{CustomOpenAIConfig, SkillVisionConfig},
 };
 
 // Hardcoded server URL
@@ -109,6 +109,14 @@ pub struct SaveTranscriptConfigRequest {
     pub model: String,
     #[serde(rename = "apiKey")]
     pub api_key: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SkillVisionConfigResponse {
+    pub endpoint: String,
+    #[serde(rename = "apiKey")]
+    pub api_key: Option<String>,
+    pub model: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1270,6 +1278,58 @@ pub async fn api_get_custom_openai_config<R: Runtime>(
 
 /// Tests the connection to a custom OpenAI-compatible endpoint
 /// Makes a minimal request to verify the endpoint is reachable and responds correctly
+#[tauri::command]
+pub async fn api_get_skill_vision_config<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<SkillVisionConfigResponse>, String> {
+    let pool = state.db_manager.pool();
+
+    let config = SettingsRepository::get_skill_vision_config(pool)
+        .await
+        .map_err(|e| format!("Failed to load skill vision config: {}", e))?;
+
+    Ok(config.map(|c| SkillVisionConfigResponse {
+        endpoint: c.endpoint,
+        api_key: c.api_key,
+        model: c.model,
+    }))
+}
+
+#[tauri::command]
+pub async fn api_save_skill_vision_config<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    endpoint: String,
+    api_key: Option<String>,
+    model: String,
+) -> Result<serde_json::Value, String> {
+    if endpoint.trim().is_empty() {
+        return Err("Endpoint URL is required".to_string());
+    }
+    if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+        return Err("Endpoint must start with http:// or https://".to_string());
+    }
+    if model.trim().is_empty() {
+        return Err("Model is required".to_string());
+    }
+
+    let config = SkillVisionConfig {
+        endpoint: endpoint.trim().to_string(),
+        api_key: api_key.filter(|k| !k.trim().is_empty()),
+        model: model.trim().to_string(),
+    };
+
+    SettingsRepository::save_skill_vision_config(state.db_manager.pool(), &config)
+        .await
+        .map_err(|e| format!("Failed to save skill vision config: {}", e))?;
+
+    Ok(serde_json::json!({
+        "status": "success",
+        "message": "Skill vision config saved"
+    }))
+}
+
 #[tauri::command]
 pub async fn api_test_custom_openai_connection<R: Runtime>(
     _app: AppHandle<R>,
