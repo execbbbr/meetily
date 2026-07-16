@@ -127,7 +127,44 @@ export default function RootLayout({
     };
   }, [showOnboarding]);
 
-  // Handle file drop for audio import
+  // Start/stop the background meeting detector based on the beta feature flag.
+  useEffect(() => {
+    const beta = loadBetaFeatures();
+    if (beta.meetingDetection) {
+      invoke('start_meeting_detection').catch((e) =>
+        console.error('[Layout] Failed to start meeting detection:', e)
+      );
+    } else {
+      invoke('stop_meeting_detection').catch(() => {});
+    }
+  }, []);
+
+  // Listen for detected meeting apps (a conferencing app started a call: process
+  // running AND microphone in use). Prompt the user to start recording.
+  useEffect(() => {
+    const unlisten = listen<{ app_id: string; display_name: string }>(
+      'meeting-app-detected',
+      (event) => {
+        const name = event.payload?.display_name ?? 'A meeting';
+        if (showOnboarding) return; // don't prompt before setup is done
+
+        toast(`${name} meeting detected`, {
+          description: 'Start recording this meeting?',
+          duration: 15000,
+          action: {
+            label: 'Start recording',
+            onClick: () => {
+              window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'));
+            },
+          },
+        });
+      }
+    );
+
+    return () => {
+      unlisten.then(fn => fn());
+    };
+  }, [showOnboarding]);
   const handleFileDrop = useCallback((paths: string[]) => {
     // Check if beta features are enabled (read from localStorage directly since we're outside ConfigProvider)
     const betaFeatures = loadBetaFeatures();

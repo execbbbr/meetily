@@ -22,10 +22,18 @@ export interface BetaFeatures {
    * @since v0.3.0
    */
   importAndRetranscribe: boolean;
+
+  /**
+   * Detect when a desktop conferencing app (Teams, Zoom, Tencent Meeting, ...) is
+   * actively in a meeting (process running AND microphone in use) and prompt to record.
+   * @since v0.4.0
+   */
+  meetingDetection: boolean;
 }
 
 export const DEFAULT_BETA_FEATURES: BetaFeatures = {
   importAndRetranscribe: true, // Default: enabled
+  meetingDetection: false, // Default: off (opt-in)
 };
 
 
@@ -34,6 +42,7 @@ export const DEFAULT_BETA_FEATURES: BetaFeatures = {
  */
 export const BETA_FEATURE_NAMES: Record<keyof BetaFeatures, string> = {
   importAndRetranscribe: 'Import Audio & Retranscribe',
+  meetingDetection: 'Meeting Auto-Detection',
 };
 
 /**
@@ -41,6 +50,7 @@ export const BETA_FEATURE_NAMES: Record<keyof BetaFeatures, string> = {
  */
 export const BETA_FEATURE_DESCRIPTIONS: Record<keyof BetaFeatures, string> = {
   importAndRetranscribe: 'Import audio files to transcribe or retranscribe existing meetings with different language settings.',
+  meetingDetection: 'Detect when Teams, Zoom, Tencent Meeting, Feishu/Lark or Webex enters a meeting (app running and microphone in use) and prompt you to start recording.',
 };
 
 /**
